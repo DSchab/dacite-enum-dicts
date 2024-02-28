@@ -1,6 +1,16 @@
 from dataclasses import is_dataclass
+from enum import Enum
 from itertools import zip_longest
-from typing import TypeVar, Type, Optional, get_type_hints, Mapping, Any, Collection, MutableMapping
+from typing import (
+    TypeVar,
+    Type,
+    Optional,
+    get_type_hints,
+    Mapping,
+    Any,
+    Collection,
+    MutableMapping,
+)
 
 from dacite.cache import cache
 from dacite.config import Config
@@ -36,7 +46,9 @@ from dacite.types import (
 T = TypeVar("T")
 
 
-def from_dict(data_class: Type[T], data: Data, config: Optional[Config] = None) -> T:
+def from_dict(
+    data_class: Type[T], data: Data, config: Optional[Config] = None
+) -> T:
     """Create a data class instance from a dictionary.
 
     :param data_class: a data class type
@@ -48,7 +60,9 @@ def from_dict(data_class: Type[T], data: Data, config: Optional[Config] = None) 
     post_init_values: MutableMapping[str, Any] = {}
     config = config or Config()
     try:
-        data_class_hints = cache(get_type_hints)(data_class, localns=config.hashable_forward_references)
+        data_class_hints = cache(get_type_hints)(
+            data_class, localns=config.hashable_forward_references
+        )
     except NameError as error:
         raise ForwardReferenceError(str(error))
     data_class_fields = cache(get_fields)(data_class)
@@ -61,12 +75,16 @@ def from_dict(data_class: Type[T], data: Data, config: Optional[Config] = None) 
         if field.name in data:
             try:
                 field_data = data[field.name]
-                value = _build_value(type_=field_type, data=field_data, config=config)
+                value = _build_value(
+                    type_=field_type, data=field_data, config=config
+                )
             except DaciteFieldError as error:
                 error.update_path(field.name)
                 raise
             if config.check_types and not is_instance(value, field_type):
-                raise WrongTypeError(field_path=field.name, field_type=field_type, value=value)
+                raise WrongTypeError(
+                    field_path=field.name, field_type=field_type, value=value
+                )
         else:
             try:
                 value = get_default_value_for_field(field, field_type)
@@ -85,6 +103,7 @@ def from_dict(data_class: Type[T], data: Data, config: Optional[Config] = None) 
 
 
 def _build_value(type_: Type, data: Any, config: Config) -> Any:
+
     if is_init_var(type_):
         type_ = extract_init_var(type_)
     if type_ in config.type_hooks:
@@ -94,9 +113,13 @@ def _build_value(type_: Type, data: Any, config: Config) -> Any:
     if is_union(type_):
         data = _build_value_for_union(union=type_, data=data, config=config)
     elif is_generic_collection(type_):
-        data = _build_value_for_collection(collection=type_, data=data, config=config)
+        data = _build_value_for_collection(
+            collection=type_, data=data, config=config
+        )
     elif cache(is_dataclass)(type_) and isinstance(data, Mapping):
         data = from_dict(data_class=type_, data=data, config=config)
+    elif is_subclass(type_, Enum):
+        data = type_(data)
     for cast_type in config.cast:
         if is_subclass(type_, cast_type):
             if is_generic_collection(type_):
@@ -116,7 +139,11 @@ def _build_value_for_union(union: Type, data: Any, config: Config) -> Any:
         try:
             # noinspection PyBroadException
             try:
-                value = _build_value(type_=inner_type, data=data, config=config)
+                value = _build_value(
+                    type_=inner_type,
+                    data=data,
+                    config=config,
+                )
             except Exception:  # pylint: disable=broad-except
                 continue
             if is_instance(value, inner_type):
@@ -135,21 +162,37 @@ def _build_value_for_union(union: Type, data: Any, config: Config) -> Any:
     raise UnionMatchError(field_type=union, value=data)
 
 
-def _build_value_for_collection(collection: Type, data: Any, config: Config) -> Any:
+def _build_value_for_collection(
+    collection: Type, data: Any, config: Config
+) -> Any:
     data_type = data.__class__
     if isinstance(data, Mapping) and is_subclass(collection, Mapping):
-        item_type = extract_generic(collection, defaults=(Any, Any))[1]
-        return data_type((key, _build_value(type_=item_type, data=value, config=config)) for key, value in data.items())
+        # NOTE: Also builds values for keys.
+        key_type, value_type = extract_generic(collection, defaults=(Any, Any))
+        return data_type(
+            (
+                _build_value(type_=key_type, data=key, config=config),
+                _build_value(type_=value_type, data=value, config=config),
+            )
+            for key, value in data.items()
+        )
     elif isinstance(data, tuple) and is_subclass(collection, tuple):
         if not data:
             return data_type()
         types = extract_generic(collection)
         if len(types) == 2 and types[1] == Ellipsis:
-            return data_type(_build_value(type_=types[0], data=item, config=config) for item in data)
+            return data_type(
+                _build_value(type_=types[0], data=item, config=config)
+                for item in data
+            )
         return data_type(
-            _build_value(type_=type_, data=item, config=config) for item, type_ in zip_longest(data, types)
+            _build_value(type_=type_, data=item, config=config)
+            for item, type_ in zip_longest(data, types)
         )
     elif isinstance(data, Collection) and is_subclass(collection, Collection):
         item_type = extract_generic(collection, defaults=(Any,))[0]
-        return data_type(_build_value(type_=item_type, data=item, config=config) for item in data)
+        return data_type(
+            _build_value(type_=item_type, data=item, config=config)
+            for item in data
+        )
     return data
